@@ -1,5 +1,1 @@
-- clean up cproj.sh
-- don't write skeleton files to disk, just use here-docs
-- use scuttle for testing
-- reflect readme
-- Makefile should be way better
+
