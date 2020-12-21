@@ -5,6 +5,7 @@ function cproj() {
     cprojSite="https://github.com/smadin/cproj"
     cprojMasterVersionUrl="$cprojSite/raw/master/VERSION"
     
+    # simple version check - fetch the VERSION file from github and compare it to this script
     function checkCprojVersion() {
         verPat="^[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$"
         if [[ -n "$(which curl)" ]]; then
@@ -12,7 +13,7 @@ function cproj() {
             cprojMasterVersion=$(curl -L "$cprojMasterVersionUrl" 2>/dev/null)
         elif [[ -n "$(which wget)" ]]; then
             foundWget="true"
-            cprojMasterVersion=$(wget -o /dev/null -O - "$cprojMasterVersionUrl")
+            cprojMasterVersion=$(wget -o /dev/null -O - "$cprojMasterVersionUrl" 2>/dev/null)
         fi
 
         if [[ -z "$cprojMasterVersion" || ! "$cprojMasterVersion" =~ $verPat ]]; then
@@ -63,16 +64,20 @@ function cproj() {
 
     mkdir -p "src" "include" "test"
 
+    # to ensure Scuttle is available for unit testing, check whether it's installed in /usr/local
+    # if not, download it to the project directory
     if [[ -f /usr/local/include/scuttle.h && -f /usr/local/lib/scuttle/scuttle.sh ]]; then
         scuttleInvocation="bash /usr/local/lib/scuttle/scuttle.sh"
     elif [[ -n "$foundCurl" || -n "$foundWget" ]]; then
+        scuttleHeaderUrl="https://github.com/smadin/scuttle/raw/master/src/scuttle.sh"
+        scuttleScriptUrl="https://github.com/smadin/scuttle/raw/master/include/scuttle.h"
         mkdir -p "script"
         if [[ -n "$foundCurl" ]]; then
-            curl -o script/scuttle.sh 
-            curl -o include/scuttle.h
+            curl -L -o script/scuttle.sh "$scuttleHeaderUrl"
+            curl -L -o include/scuttle.h "$scuttleScriptUrl"
         else
-            wget -P script "https://github.com/smadin/scuttle/raw/master/src/scuttle.sh"
-            wget -P include "https://github.com/smadin/scuttle/raw/master/include/scuttle.h"
+            wget -P script "$scuttleHeaderUrl"
+            wget -P include "$scuttleScriptUrl"
         fi
         scuttleInvocation="bash script/scuttle.sh"
     else
@@ -80,6 +85,7 @@ function cproj() {
         scuttleInvocation="bash scuttle.sh"
     fi
 
+    # write out the main project header file, with some useful stuff for version checking
     function writeHeader() {
         cat <<\EOF |
 #ifndef _<<PROJNAME>>_H
@@ -109,6 +115,7 @@ EOF
         sed -e "s/<<PROJNAME>>/$projNameUpper/g" -e "s/<<ProjName>>/$projName/g" -e "s/<<projname>>/$projNameLower/g" > "include/$projNameLower.h"
     }
 
+    # write out a module with a dummy function, so we can build our unit test skeleton against it
     function writeLibSource() {
         cat <<\EOF |
 #include "<<projname>>.h"
@@ -122,6 +129,7 @@ EOF
         sed -e "s/<<projname>>/$projNameLower/g" -e "s/<<randval>>/$randVal/g" > "src/lib$projNameLower.c"
     }
 
+    # write out the basic unit test skeleton against the dummy function
     function writeTestSuite() {
         cat <<\EOF |
 #include "<<projname>>.h"
@@ -144,6 +152,7 @@ EOF
         sed -e "s/<<projname>>/$projNameLower/g" -e "s/<<randval>>/$randVal/g" > "test/test_lib$projNameLower.c"
     }
 
+    # write out the main program file, which just prints out the version string and the return value of the dummy function
     function writeMain() {
         cat <<\EOF |
 #include "<<projname>>.h"
@@ -158,6 +167,11 @@ const <<ProjName>>Version currentVersion = {
 int main(int argc, char **argv)
 {
     printf("This is <<ProjName>>, v%s.\n", <<PROJNAME>>_VER_STRING);
+
+    /* suppress c99 warnings */
+    (void)argc;
+    (void)argv;
+
     int i = <<projname>>();
     printf("<<projname>>() returned %d\n", i);
     return 0;
@@ -171,6 +185,7 @@ EOF
         sed -e "s/<<ProjName>>/$projName/g" -e "s/<<PROJNAME>>/$projNameUpper/g" -e "s/<<projname>>/$projNameLower/g" > "src/main.c"
     }
 
+    # write out the makefile to drive the build process
     function writeMakefile() {
         cat <<\EOF |
 ifneq (,$(shell which clang))
@@ -183,7 +198,7 @@ OBJDIR  := obj
 INCDIR  := include
 BINDIR  := bin
 TESTDIR := test
-CFLAGS  := -Wall -Werror $(patsubst %,-I%,$(INCDIR)) -c
+CFLAGS  := -Wall -Werror -Wextra -std=c99 $(patsubst %,-I%,$(INCDIR)) -c
 
 ifdef DEBUG
     CFLAGS += -g
@@ -210,7 +225,7 @@ dirs:
 
 test: dirs $(OBJS)
 	<<scuttle>> $(TESTDIR)
-	$(MAKE) -C $(TESTDIR)
+	DEBUG=1 $(MAKE) -C $(TESTDIR)
 	cat $(TESTDIR)/log/test_<<projname>>.log
 
 $(BINDIR)/$(BIN): $(OBJS)
@@ -232,5 +247,27 @@ EOF
     if [[ -n "$didPushdir" ]]; then
         popd
     fi
-}
 
+    # clean up all the variables we set
+    unset cprojVersion
+    unset cprojSite
+    unset cprojMasterVersionUrl
+    unset foundCurl
+    unset cprojMasterVersion
+    unset foundWget
+    unset projName
+    unset pwdBaseName
+    unset projNameUpper
+    unset projNameLower
+    unset randVal
+    unset didPushdir
+    unset scuttleInvocation
+    unset scuttleHeaderUrl
+    unset scuttleScriptUrl
+    unset -f checkCprojVersion
+    unset -f writeHeader
+    unset -f writeLibSource
+    unset -f writeTestSuite
+    unset -f writeMain
+    unset -f writeMakefile
+}
